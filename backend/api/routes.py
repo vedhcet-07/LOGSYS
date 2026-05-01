@@ -1,5 +1,5 @@
 """
-LogMind API Router – wired for Phase 1 ingestion pipeline.
+LogMind API Router – Phase 2: fully wired ingestion + query pipeline.
 """
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ from typing import Any
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
 from models import BaseChunk, IngestResult, RCAOutput, EvidenceItem
 from services.graph_store import get_graph_json, get_stats as graph_stats, add_entity, add_relationship
@@ -18,7 +19,12 @@ logger = logging.getLogger("logmind.api")
 
 router = APIRouter()
 
-# ── Allowed upload extensions ─────────────────────────────────────────────────
+# ── Request models ─────────────────────────────────────────────────────────────
+class QueryRequest(BaseModel):
+    query: str
+
+
+# ── Upload extension sets ──────────────────────────────────────────────────────
 _LOG_EXTS     = {".log", ".txt"}
 _IMAGE_EXTS   = {".png", ".jpg", ".jpeg", ".webp"}
 _METRICS_EXTS = {".csv", ".json"}
@@ -44,7 +50,7 @@ async def health():
 async def ingest_files(files: list[UploadFile] = File(...)):
     """
     Upload log files, dashboard images, and/or metrics CSV/JSON.
-    Runs the full ingestion pipeline: parse → embed → Pinecone → graph.
+    Runs the full ingestion pipeline: parse → embed → Pinecone → knowledge graph.
     """
     if not files:
         raise HTTPException(status_code=400, detail="No files provided.")
@@ -66,8 +72,7 @@ async def ingest_files(files: list[UploadFile] = File(...)):
                 errors.append(f"Skipped {fname}: unsupported extension {ext}")
                 continue
 
-            # Save to temp dir
-            dest = tmp_path / fname
+            dest    = tmp_path / fname
             content = await upload.read()
             dest.write_bytes(content)
             result.files_processed += 1
@@ -87,64 +92,88 @@ async def ingest_files(files: list[UploadFile] = File(...)):
 
                 all_chunks.extend(chunks)
 
-                # Update knowledge graph from entities
+                # Update knowledge graph
                 for chunk in chunks:
                     meta = chunk.metadata
-                    # Add file node
                     add_entity(fname, "file", modality=modality)
-                    # services / exceptions are lists in chunk.metadata
+
                     services   = meta.get("services", [])
                     exceptions = meta.get("exceptions", [])
-                    if isinstance(services, str):   services   = [s for s in services.split(",") if s.strip()]
-                    if isinstance(exceptions, str): exceptions = [e for e in exceptions.split(",") if e.strip()]
+                    databases  = meta.get("databases", [])
+
+                    if isinstance(services, str):
+                        services = [s.strip() for s in services.split(",") if s.strip()]
+                    if isinstance(exceptions, str):
+                        exceptions = [e.strip() for e in exceptions.split(",") if e.strip()]
+                    if isinstance(databases, str):
+                        databases = [d.strip() for d in databases.split(",") if d.strip()]
+
                     for svc in services:
-                        svc = svc.strip()
                         if svc:
                             add_entity(svc, "service")
                             add_relationship(fname, svc, "observed_in")
                     for exc in exceptions:
-                        exc = exc.strip()
                         if exc:
                             add_entity(exc, "error")
                             add_relationship(exc, fname, "observed_in")
+                    for db in databases:
+                        if db:
+                            add_entity(db, "database")
+                            add_relationship(fname, db, "observed_in")
 
             except Exception as exc:
                 msg = f"Error processing {fname}: {exc}"
                 logger.error(msg)
                 errors.append(msg)
 
-    # Embed all chunks and upsert to Pinecone
+    # Embed + upsert to Pinecone
     if all_chunks:
         logger.info("Embedding %d chunks ...", len(all_chunks))
-        embeddings = embedder.embed_batch([c.text for c in all_chunks])
-        upsert_result = pinecone_store.upsert_chunks(all_chunks, embeddings)
-        result.chunks_indexed = upsert_result.get("upserted", len(all_chunks))
+        embeddings  = embedder.embed_batch([c.text for c in all_chunks])
+        upsert_info = pinecone_store.upsert_chunks(all_chunks, embeddings)
+        result.chunks_indexed = upsert_info.get("upserted", 0)
     else:
         result.chunks_indexed = 0
 
     g = graph_stats()
-    result.graph_nodes  = g["nodes"]
-    result.graph_edges  = g["edges"]
-    result.errors       = errors
-    result.status       = "success" if not errors else "partial"
+    result.graph_nodes = g["nodes"]
+    result.graph_edges = g["edges"]
+    result.errors      = errors
+    result.status      = "success" if not errors else "partial"
 
-    logger.info("Ingest complete: %d files, %d chunks, %d nodes, %d edges",
+    logger.info("Ingest: %d files → %d chunks → %d nodes / %d edges",
                 result.files_processed, result.chunks_indexed,
                 result.graph_nodes, result.graph_edges)
     return result
 
 
-# ── Query (stub – Phase 2 wires agents) ──────────────────────────────────────
+# ── Query ──────────────────────────────────────────────────────────────────────
 @router.post("/query", response_model=RCAOutput, tags=["Pipeline"])
-async def query_incident(body: dict):
-    """Accept a natural-language query. Agents wired in Phase 2."""
-    question = body.get("query", "")
-    logger.info("Query received: %s", question)
-    return RCAOutput(
-        answer="[Phase 2 stub] Agents not yet wired.",
-        root_cause="Pending Phase 2 agent implementation.",
-        confidence="low",
-    )
+async def query_incident(request: QueryRequest):
+    """
+    Accept a natural-language incident question.
+    Runs: RetrievalAgent → RCAAgent via Orchestrator.
+    Returns structured RCA with evidence, timeline, recommendations, and agent trace.
+    """
+    if not request.query.strip():
+        raise HTTPException(status_code=400, detail="Query cannot be empty.")
+
+    logger.info("Query: %s", request.query)
+
+    try:
+        from agents.orchestrator import Orchestrator
+        orch   = Orchestrator()
+        result = orch.run(request.query)
+        return result
+    except Exception as exc:
+        logger.error("Orchestrator error: %s", exc, exc_info=True)
+        # Return a safe error response instead of 500
+        return RCAOutput(
+            answer     = f"An error occurred during analysis: {exc}",
+            root_cause = "Analysis failed — check server logs.",
+            confidence = "low",
+            agent_trace=[{"agent": "orchestrator", "action": "error", "result": str(exc)}],
+        )
 
 
 # ── Graph ──────────────────────────────────────────────────────────────────────
