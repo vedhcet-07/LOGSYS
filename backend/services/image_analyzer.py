@@ -9,7 +9,7 @@ import logging
 from pathlib import Path
 
 from models import BaseChunk
-from config import GEMINI_API_KEY, LLM_MODEL
+from config import GEMINI_API_KEY, VISION_MODEL
 
 logger = logging.getLogger("logmind.image_analyzer")
 
@@ -29,8 +29,15 @@ def _get_cache_path(image_path: Path) -> Path:
 
 
 def _call_gemini_vision(image_path: Path) -> str:
-    """Call Gemini Vision API and return the text summary."""
+    """
+    Call Gemini Vision API to analyse a dashboard screenshot.
+    Always uses VISION_MODEL (Gemini) — Groq does not support image input.
+    """
+    if not GEMINI_API_KEY:
+        logger.warning("GEMINI_API_KEY not set — vision analysis unavailable.")
+        return f"[Vision unavailable] Set GEMINI_API_KEY to enable dashboard analysis: {image_path.name}"
     try:
+        import io
         from google import genai
         from google.genai import types as gtypes
         from PIL import Image as PILImage
@@ -38,14 +45,12 @@ def _call_gemini_vision(image_path: Path) -> str:
         client = genai.Client(api_key=GEMINI_API_KEY)
         img    = PILImage.open(image_path)
 
-        # Convert PIL image to bytes for the new SDK
-        import io
         buf = io.BytesIO()
         img.save(buf, format="PNG")
         img_bytes = buf.getvalue()
 
         response = client.models.generate_content(
-            model=LLM_MODEL,
+            model=VISION_MODEL,
             contents=[
                 _VISION_PROMPT,
                 gtypes.Part.from_bytes(data=img_bytes, mime_type="image/png"),
@@ -53,11 +58,12 @@ def _call_gemini_vision(image_path: Path) -> str:
         )
         return response.text.strip()
     except ImportError:
-        logger.warning("google-genai or pillow not installed. Returning placeholder.")
+        logger.warning("google-genai or pillow not installed.")
         return f"[Vision unavailable] Dashboard screenshot: {image_path.name}"
     except Exception as exc:
         logger.error("Gemini Vision call failed for %s: %s", image_path.name, exc)
         return f"[Vision error] Could not analyze {image_path.name}: {exc}"
+
 
 
 def analyze_image(file_path: str | Path) -> BaseChunk:

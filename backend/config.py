@@ -19,7 +19,8 @@ PINECONE_API_KEY: str = os.getenv("PINECONE_API_KEY", "")
 PINECONE_INDEX_NAME: str = os.getenv("PINECONE_INDEX_NAME", "logmind-index")
 
 # ── LLM model ─────────────────────────────────────────────────────────────────
-LLM_MODEL: str = os.getenv("LLM_MODEL", "gemini-2.0-flash")
+LLM_MODEL: str    = os.getenv("LLM_MODEL",    "gemini-2.0-flash")   # text RCA (Groq or Gemini)
+VISION_MODEL: str = os.getenv("VISION_MODEL", "gemini-2.0-flash")   # vision/image — always Gemini
 
 # ── Embeddings ────────────────────────────────────────────────────────────────
 EMBEDDING_DIM: int = int(os.getenv("EMBEDDING_DIM", "768"))
