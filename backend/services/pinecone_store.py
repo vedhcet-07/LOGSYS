@@ -59,13 +59,18 @@ def _get_index():
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
-def upsert_chunks(chunks: list[BaseChunk], embeddings: list[list[float]]) -> dict[str, int]:
+def upsert_chunks(
+    chunks: list[BaseChunk],
+    embeddings: list[list[float]],
+    namespace: str | None = None,
+) -> dict[str, int]:
     """
-    Upsert a list of BaseChunk objects with their pre-computed embeddings.
+    Upsert BaseChunk objects with their embeddings.
 
     Args:
         chunks:     List of BaseChunk objects.
         embeddings: Corresponding embedding vectors (same length as chunks).
+        namespace:  Pinecone namespace (session_id for session isolation).
 
     Returns:
         {"upserted": N}
@@ -101,16 +106,23 @@ def upsert_chunks(chunks: list[BaseChunk], embeddings: list[list[float]]) -> dic
     # Upsert in batches of 100 (Pinecone limit)
     BATCH = 100
     total_upserted = 0
+    upsert_kwargs: dict[str, Any] = {}
+    if namespace:
+        upsert_kwargs["namespace"] = namespace
     for i in range(0, len(vectors), BATCH):
         batch = vectors[i : i + BATCH]
         try:
-            index.upsert(vectors=batch)
+            index.upsert(vectors=batch, **upsert_kwargs)
             total_upserted += len(batch)
-            logger.debug("Upserted batch %d/%d (%d vectors)", i // BATCH + 1, (len(vectors) - 1) // BATCH + 1, len(batch))
+            logger.debug(
+                "Upserted batch %d/%d (%d vectors) namespace=%s",
+                i // BATCH + 1, (len(vectors) - 1) // BATCH + 1,
+                len(batch), namespace or "global",
+            )
         except Exception as exc:
             logger.error("Upsert batch failed: %s", exc)
 
-    logger.info("Upserted %d vectors to Pinecone.", total_upserted)
+    logger.info("Upserted %d vectors (namespace=%s).", total_upserted, namespace or "global")
     return {"upserted": total_upserted}
 
 
@@ -118,9 +130,16 @@ def query(
     embedding: list[float],
     top_k: int = 5,
     filter_dict: Optional[dict] = None,
+    namespace: str | None = None,
 ) -> list[dict[str, Any]]:
     """
     Query Pinecone for the top-K most similar vectors.
+
+    Args:
+        embedding:   Query vector.
+        top_k:       Number of results.
+        filter_dict: Optional metadata filter.
+        namespace:   Pinecone namespace (session_id for session isolation).
 
     Returns:
         List of dicts with keys: id, score, metadata, snippet.
@@ -132,12 +151,14 @@ def query(
 
     try:
         kwargs: dict[str, Any] = {
-            "vector":          embedding,
-            "top_k":           top_k,
+            "vector":           embedding,
+            "top_k":            top_k,
             "include_metadata": True,
         }
         if filter_dict:
             kwargs["filter"] = filter_dict
+        if namespace:
+            kwargs["namespace"] = namespace
 
         response = index.query(**kwargs)
         results = []

@@ -1,12 +1,13 @@
 """
 LogMind – Knowledge Graph Store (NetworkX)
-Phase 0: skeleton with load/save/get_graph_json stubs.
-Full implementation in Phase 1.
-"""
 
-import json
+Supports two modes:
+  - Global graph (session_id=None) — backward-compatible, used by old API routes
+  - Session graph (session_id=str) — isolated per-session graph via session_store
+"""
+from __future__ import annotations
+
 import logging
-import os
 import pickle
 from pathlib import Path
 from typing import Any
@@ -15,20 +16,15 @@ import networkx as nx
 
 logger = logging.getLogger("logmind.graph_store")
 
-# ---------------------------------------------------------------------------
-# Graph singleton
-# ---------------------------------------------------------------------------
+# ── Global graph (backward-compat) ───────────────────────────────────────────
 _graph: nx.DiGraph = nx.DiGraph()
-
-# Persist to the data/ directory so Docker volume survives restarts
 _GRAPH_PATH = Path(__file__).parent.parent / "data" / "graph.gpickle"
 
 
-# ---------------------------------------------------------------------------
-# Persistence helpers
-# ---------------------------------------------------------------------------
+# ── Global graph persistence ──────────────────────────────────────────────────
+
 def load_graph() -> None:
-    """Load persisted graph from disk into the module-level singleton."""
+    """Load the global graph singleton from disk."""
     global _graph
     if _GRAPH_PATH.exists():
         try:
@@ -48,58 +44,101 @@ def load_graph() -> None:
 
 
 def save_graph() -> None:
-    """Persist the current in-memory graph to disk."""
+    """Persist the global graph to disk."""
     _GRAPH_PATH.parent.mkdir(parents=True, exist_ok=True)
     with open(_GRAPH_PATH, "wb") as fh:
         pickle.dump(_graph, fh)
-    logger.debug("Graph saved: %d nodes, %d edges",
-                 _graph.number_of_nodes(), _graph.number_of_edges())
+    logger.debug(
+        "Graph saved: %d nodes, %d edges",
+        _graph.number_of_nodes(),
+        _graph.number_of_edges(),
+    )
 
 
-# ---------------------------------------------------------------------------
-# Graph mutation helpers  (Phase 1 will flesh these out)
-# ---------------------------------------------------------------------------
-def add_entity(name: str, entity_type: str, **attrs: Any) -> None:
-    """Add or update a node in the knowledge graph."""
-    _graph.add_node(name, type=entity_type, **attrs)
-    save_graph()
+# ── Graph resolver ────────────────────────────────────────────────────────────
+
+def _resolve_graph(session_id: str | None) -> tuple[nx.DiGraph, bool]:
+    """
+    Return (graph, is_session_graph).
+    If session_id is given, loads the session's isolated graph.
+    If session_id is None, returns the global singleton.
+    """
+    if session_id is not None:
+        from services.session_store import get_session_graph
+        return get_session_graph(session_id), True
+    return _graph, False
 
 
-def add_relationship(src: str, dst: str, rel_type: str, **attrs: Any) -> None:
-    """Add a directed edge between two entities."""
-    _graph.add_edge(src, dst, rel=rel_type, **attrs)
-    save_graph()
+def _persist(graph: nx.DiGraph, session_id: str | None) -> None:
+    """Save graph to the right place depending on mode."""
+    if session_id is not None:
+        from services.session_store import save_session_graph
+        save_session_graph(session_id, graph)
+    else:
+        save_graph()
 
 
-def get_neighbors(entity: str, depth: int = 2) -> list[dict[str, Any]]:
-    """Return nodes reachable from *entity* within *depth* hops."""
-    if entity not in _graph:
+# ── Graph mutation helpers ────────────────────────────────────────────────────
+
+def add_entity(
+    name: str,
+    entity_type: str,
+    session_id: str | None = None,
+    **attrs: Any,
+) -> None:
+    """Add or update a node. Writes to session graph if session_id given."""
+    graph, is_session = _resolve_graph(session_id)
+    graph.add_node(name, type=entity_type, **attrs)
+    _persist(graph, session_id)
+
+
+def add_relationship(
+    src: str,
+    dst: str,
+    rel_type: str,
+    session_id: str | None = None,
+    **attrs: Any,
+) -> None:
+    """Add a directed edge. Writes to session graph if session_id given."""
+    graph, is_session = _resolve_graph(session_id)
+    graph.add_edge(src, dst, rel=rel_type, **attrs)
+    _persist(graph, session_id)
+
+
+def get_neighbors(
+    entity: str,
+    depth: int = 2,
+    session_id: str | None = None,
+) -> list[dict[str, Any]]:
+    """Return nodes reachable from entity within depth hops."""
+    graph, _ = _resolve_graph(session_id)
+    if entity not in graph:
         return []
-    subgraph_nodes = nx.single_source_shortest_path(_graph, entity, cutoff=depth)
-    results = []
-    for node, path in subgraph_nodes.items():
-        results.append({"node": node, "path": path, "attrs": _graph.nodes[node]})
-    return results
-
-
-# ---------------------------------------------------------------------------
-# Serialization for API  (GET /api/graph)
-# ---------------------------------------------------------------------------
-def get_graph_json() -> dict[str, Any]:
-    """Serialize the graph to a JSON-safe dict for the frontend."""
-    nodes = [
-        {"id": n, **data}
-        for n, data in _graph.nodes(data=True)
+    subgraph_nodes = nx.single_source_shortest_path(graph, entity, cutoff=depth)
+    return [
+        {"node": node, "path": path, "attrs": dict(graph.nodes[node])}
+        for node, path in subgraph_nodes.items()
     ]
-    edges = [
-        {"source": u, "target": v, **data}
-        for u, v, data in _graph.edges(data=True)
-    ]
-    return {"nodes": nodes, "edges": edges}
 
 
-def get_stats() -> dict[str, int]:
+# ── Serialization for API ─────────────────────────────────────────────────────
+
+def get_graph_json(session_id: str | None = None) -> dict[str, Any]:
+    """Serialize graph to JSON-safe dict. Uses session graph if session_id given."""
+    if session_id is not None:
+        from services.session_store import get_session_graph_json
+        return get_session_graph_json(session_id)
+    g = _graph
     return {
-        "nodes": _graph.number_of_nodes(),
-        "edges": _graph.number_of_edges(),
+        "nodes": [{"id": n, **data} for n, data in g.nodes(data=True)],
+        "edges": [{"source": u, "target": v, **data} for u, v, data in g.edges(data=True)],
+    }
+
+
+def get_stats(session_id: str | None = None) -> dict[str, int]:
+    """Return node/edge counts for the global or session graph."""
+    graph, _ = _resolve_graph(session_id)
+    return {
+        "nodes": graph.number_of_nodes(),
+        "edges": graph.number_of_edges(),
     }

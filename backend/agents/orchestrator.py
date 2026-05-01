@@ -31,22 +31,26 @@ class Orchestrator:
         self.rca       = RCAAgent()
         self.logger    = logging.getLogger("logmind.orchestrator")
 
-    def run(self, query: str) -> RCAOutput:
+    def run(self, query: str, session_id: str | None = None) -> RCAOutput:
         """
         Execute the full retrieval → analysis pipeline.
 
         Args:
-            query: Natural-language incident question from the user.
+            query:      Natural-language incident question from the user.
+            session_id: Optional session ID — scopes retrieval to session graph/vectors.
+                        None uses the global graph (backward-compatible).
 
         Returns:
             Fully populated RCAOutput (matches /api/query response schema).
         """
-        self.logger.info("Orchestrator: handling query → %s", query[:80])
+        self.logger.info("Orchestrator: handling query [session=%s] → %s",
+                         session_id[:8] + "..." if session_id else "global",
+                         query[:80])
         merged_trace: list[dict[str, Any]] = []
 
         # ── Step 1: Retrieval ─────────────────────────────────────────────
         self.logger.info("  → calling RetrievalAgent ...")
-        retrieval_result = self.retrieval.run({"query": query})
+        retrieval_result = self.retrieval.run({"query": query, "session_id": session_id})
         evidence    = retrieval_result.get("evidence", [])
         graph_nodes = retrieval_result.get("graph_nodes", [])
         merged_trace.extend(retrieval_result.get("trace", []))

@@ -93,11 +93,12 @@ class RetrievalAgent(BaseAgent):
     def run(self, inputs: dict[str, Any]) -> dict[str, Any]:
         """
         Args:
-            inputs: {"query": str}
+            inputs: {"query": str, "session_id": str | None}
         Returns:
             {"evidence": list[dict], "graph_nodes": list[dict], "trace": list[dict]}
         """
-        query = inputs.get("query", "")
+        query      = inputs.get("query", "")
+        session_id = inputs.get("session_id")   # None → global graph/vectors
         self.clear_trace()
 
         # ── Step 1: Embed query ────────────────────────────────────────────
@@ -105,9 +106,9 @@ class RetrievalAgent(BaseAgent):
         qvec = embed_query(query)
         self._trace("embed_query", f"Generated {len(qvec)}-dim query vector")
 
-        # ── Step 2: Pinecone vector search ─────────────────────────────────
+        # ── Step 2: Pinecone vector search (scoped to session namespace) ────
         from services.pinecone_store import query as pinecone_query
-        matches = pinecone_query(qvec, top_k=5)
+        matches = pinecone_query(qvec, top_k=5, namespace=session_id)
         self._trace("pinecone_search", f"Retrieved {len(matches)} vector matches")
 
         # ── Step 3: Demo fallback if Pinecone empty ────────────────────────
@@ -115,6 +116,10 @@ class RetrievalAgent(BaseAgent):
             self._trace("fallback_triggered", "Pinecone empty — loading demo data directly")
             matches = _load_demo_fallback()
             self._trace("demo_fallback", f"Loaded {len(matches)} evidence items from demo files")
+
+        # If session graph is empty too, note it
+        if session_id:
+            self._trace("session_scope", f"Using session_id={session_id[:8]}... for graph + vectors")
 
         # ── Step 4: Extract seed entities from results + query ─────────────
         entities: set[str] = set(_entities_from_query(query))
@@ -133,17 +138,17 @@ class RetrievalAgent(BaseAgent):
 
         self._trace("entity_extraction", f"Seed entities: {list(entities)[:10]}")
 
-        # ── Step 5: Knowledge graph traversal ─────────────────────────────
+        # ── Step 5: Knowledge graph traversal (scoped to session) ─────────
         from services.graph_store import get_neighbors, get_graph_json
         graph_nodes: list[dict[str, Any]] = []
 
         if entities:
-            for entity in list(entities)[:5]:  # limit to 5 seeds
-                neighbors = get_neighbors(entity, depth=2)
+            for entity in list(entities)[:5]:
+                neighbors = get_neighbors(entity, depth=2, session_id=session_id)
                 graph_nodes.extend(neighbors)
         else:
-            # No entities found — return full graph as context
-            gj = get_graph_json()
+            # No entities — return full graph context for this session
+            gj = get_graph_json(session_id=session_id)
             graph_nodes = [{"node": n["id"], "attrs": n} for n in gj.get("nodes", [])[:20]]
 
         # Deduplicate graph nodes

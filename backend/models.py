@@ -48,3 +48,31 @@ class RCAOutput(BaseModel):
     evidence: list[EvidenceItem] = Field(default_factory=list)
     agent_trace: list[dict[str, Any]] = Field(default_factory=list)
     answer: str = ""
+
+
+# ── Session models (Phase 4A) ─────────────────────────────────────────────────
+
+class Session(BaseModel):
+    """Full session metadata."""
+    id: str
+    name: str
+    created_at: str
+    files: list[str] = Field(default_factory=list)
+    node_count: int = 0
+    edge_count: int = 0
+
+
+class SessionList(BaseModel):
+    sessions: list[Session]
+
+
+class ChatEntry(BaseModel):
+    """A single turn in a session's chat history."""
+    role: str                   # "user" | "assistant"
+    content: Any                # str for user, RCAOutput-dict for assistant
+    timestamp: str = Field(default_factory=lambda: "")
+
+
+class CreateSessionRequest(BaseModel):
+    name: str | None = None     # optional custom name; auto-generated if omitted
+
