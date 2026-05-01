@@ -1,0 +1,119 @@
+/* App-level layout */
+.app-shell {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+/* ── Header ── */
+.app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 var(--space-8);
+  height: 56px;
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-border);
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  backdrop-filter: blur(8px);
+}
+
+.header-brand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.brand-icon {
+  font-size: 1.5rem;
+  color: var(--color-primary);
+  filter: drop-shadow(0 0 8px rgba(99,102,241,.6));
+}
+
+.brand-name {
+  font-size: 1.1rem;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  color: var(--color-text);
+}
+
+.brand-tag {
+  font-size: 0.75rem;
+  color: var(--color-text-subtle);
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border);
+  padding: 2px 8px;
+  border-radius: 99px;
+}
+
+.header-status {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-warning);
+  animation: pulse 2s ease infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.4; }
+}
+
+/* ── Main ── */
+.app-main {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-12) var(--space-8);
+}
+
+/* ── Hero ── */
+.hero {
+  max-width: 640px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-5);
+}
+
+.hero h1 {
+  font-size: 2.5rem;
+  background: linear-gradient(135deg, var(--color-primary-glow) 0%, #c084fc 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.hero p {
+  font-size: 1.05rem;
+  line-height: 1.7;
+  max-width: 500px;
+}
+
+.hero-badges {
+  display: flex;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.hero-note {
+  border-style: dashed;
+}
+
+/* ── Footer ── */
+.app-footer {
+  padding: var(--space-4) var(--space-8);
+  text-align: center;
+  border-top: 1px solid var(--color-border);
+}

@@ -1,0 +1,7 @@
+# Demo data directory
+# Place synthetic incident files here:
+#   demo_app.log       – cascading failure scenario
+#   demo_metrics.json  – CPU/latency spike time-series
+#   demo_dashboard.png – Grafana-style screenshot
+
+# Files added in Phase 1 (services/data generation)
