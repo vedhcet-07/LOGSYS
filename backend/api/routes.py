@@ -1,109 +1,154 @@
 """
-LogMind API Router – stub endpoints for all phases.
-Agents will be wired in Phase 2; these stubs keep the server healthy now.
+LogMind API Router – wired for Phase 1 ingestion pipeline.
 """
+from __future__ import annotations
 
 import logging
+import tempfile
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+
+from models import BaseChunk, IngestResult, RCAOutput, EvidenceItem
+from services.graph_store import get_graph_json, get_stats as graph_stats, add_entity, add_relationship
 
 logger = logging.getLogger("logmind.api")
 
 router = APIRouter()
 
-
-# ---------------------------------------------------------------------------
-# Request / Response models
-# ---------------------------------------------------------------------------
-class QueryRequest(BaseModel):
-    query: str
-
-
-class IngestResponse(BaseModel):
-    status: str
-    files_processed: int
-    chunks_indexed: int
-    graph_nodes: int
-    graph_edges: int
+# ── Allowed upload extensions ─────────────────────────────────────────────────
+_LOG_EXTS     = {".log", ".txt"}
+_IMAGE_EXTS   = {".png", ".jpg", ".jpeg", ".webp"}
+_METRICS_EXTS = {".csv", ".json"}
+_ALL_EXTS     = _LOG_EXTS | _IMAGE_EXTS | _METRICS_EXTS
 
 
-class QueryResponse(BaseModel):
-    answer: str
-    root_cause: str
-    evidence: list[dict[str, Any]]
-    timeline: list[str]
-    recommendations: list[str]
-    confidence: str
-    agent_trace: list[dict[str, Any]]
+def _detect_modality(filename: str) -> str:
+    ext = Path(filename).suffix.lower()
+    if ext in _LOG_EXTS:     return "log"
+    if ext in _IMAGE_EXTS:   return "image"
+    if ext in _METRICS_EXTS: return "metrics"
+    return "unknown"
 
 
-# ---------------------------------------------------------------------------
-# Health
-# ---------------------------------------------------------------------------
+# ── Health ─────────────────────────────────────────────────────────────────────
 @router.get("/health", tags=["System"])
 async def health():
-    """Liveness probe used by Docker and CI."""
     return {"status": "ok", "service": "logmind-backend"}
 
 
-# ---------------------------------------------------------------------------
-# Ingest  (Phase 1 / 2 will replace the body with real pipeline)
-# ---------------------------------------------------------------------------
-@router.post("/ingest", response_model=IngestResponse, tags=["Pipeline"])
+# ── Ingest ─────────────────────────────────────────────────────────────────────
+@router.post("/ingest", response_model=IngestResult, tags=["Pipeline"])
 async def ingest_files(files: list[UploadFile] = File(...)):
     """
-    Accept multipart file upload (logs, images, metrics).
-    Stub: validates files received and returns placeholder counts.
+    Upload log files, dashboard images, and/or metrics CSV/JSON.
+    Runs the full ingestion pipeline: parse → embed → Pinecone → graph.
     """
     if not files:
         raise HTTPException(status_code=400, detail="No files provided.")
 
-    logger.info("Ingest endpoint hit with %d file(s): %s",
-                len(files), [f.filename for f in files])
+    from services import log_parser, image_analyzer, metrics_parser, embedder, pinecone_store
 
-    # TODO (Phase 2): route each file through IngestionAgent
-    return IngestResponse(
-        status="stub_ok",
-        files_processed=len(files),
-        chunks_indexed=0,
-        graph_nodes=0,
-        graph_edges=0,
-    )
+    result = IngestResult()
+    all_chunks: list[BaseChunk] = []
+    errors: list[str] = []
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+
+        for upload in files:
+            fname = upload.filename or "upload"
+            ext   = Path(fname).suffix.lower()
+
+            if ext not in _ALL_EXTS:
+                errors.append(f"Skipped {fname}: unsupported extension {ext}")
+                continue
+
+            # Save to temp dir
+            dest = tmp_path / fname
+            content = await upload.read()
+            dest.write_bytes(content)
+            result.files_processed += 1
+
+            modality = _detect_modality(fname)
+            logger.info("Processing %s as %s", fname, modality)
+
+            try:
+                if modality == "log":
+                    chunks = log_parser.parse_log_file(dest)
+                elif modality == "image":
+                    chunks = [image_analyzer.analyze_image(dest)]
+                elif modality == "metrics":
+                    chunks = metrics_parser.parse_metrics_file(dest)
+                else:
+                    continue
+
+                all_chunks.extend(chunks)
+
+                # Update knowledge graph from entities
+                for chunk in chunks:
+                    meta = chunk.metadata
+                    # Add file node
+                    add_entity(fname, "file", modality=modality)
+                    # services / exceptions are lists in chunk.metadata
+                    services   = meta.get("services", [])
+                    exceptions = meta.get("exceptions", [])
+                    if isinstance(services, str):   services   = [s for s in services.split(",") if s.strip()]
+                    if isinstance(exceptions, str): exceptions = [e for e in exceptions.split(",") if e.strip()]
+                    for svc in services:
+                        svc = svc.strip()
+                        if svc:
+                            add_entity(svc, "service")
+                            add_relationship(fname, svc, "observed_in")
+                    for exc in exceptions:
+                        exc = exc.strip()
+                        if exc:
+                            add_entity(exc, "error")
+                            add_relationship(exc, fname, "observed_in")
+
+            except Exception as exc:
+                msg = f"Error processing {fname}: {exc}"
+                logger.error(msg)
+                errors.append(msg)
+
+    # Embed all chunks and upsert to Pinecone
+    if all_chunks:
+        logger.info("Embedding %d chunks ...", len(all_chunks))
+        embeddings = embedder.embed_batch([c.text for c in all_chunks])
+        upsert_result = pinecone_store.upsert_chunks(all_chunks, embeddings)
+        result.chunks_indexed = upsert_result.get("upserted", len(all_chunks))
+    else:
+        result.chunks_indexed = 0
+
+    g = graph_stats()
+    result.graph_nodes  = g["nodes"]
+    result.graph_edges  = g["edges"]
+    result.errors       = errors
+    result.status       = "success" if not errors else "partial"
+
+    logger.info("Ingest complete: %d files, %d chunks, %d nodes, %d edges",
+                result.files_processed, result.chunks_indexed,
+                result.graph_nodes, result.graph_edges)
+    return result
 
 
-# ---------------------------------------------------------------------------
-# Query  (Phase 2 will wire OrchestratorAgent here)
-# ---------------------------------------------------------------------------
-@router.post("/query", response_model=QueryResponse, tags=["Pipeline"])
-async def query_incident(request: QueryRequest):
-    """
-    Accept a natural-language incident question and return RCA output.
-    Stub: echoes the query and returns placeholder structure.
-    """
-    logger.info("Query received: %s", request.query)
-
-    # TODO (Phase 2): call OrchestratorAgent
-    return QueryResponse(
-        answer="[Stub] Agents not yet wired. Check back after Phase 2.",
-        root_cause="[Stub]",
-        evidence=[],
-        timeline=[],
-        recommendations=[],
+# ── Query (stub – Phase 2 wires agents) ──────────────────────────────────────
+@router.post("/query", response_model=RCAOutput, tags=["Pipeline"])
+async def query_incident(body: dict):
+    """Accept a natural-language query. Agents wired in Phase 2."""
+    question = body.get("query", "")
+    logger.info("Query received: %s", question)
+    return RCAOutput(
+        answer="[Phase 2 stub] Agents not yet wired.",
+        root_cause="Pending Phase 2 agent implementation.",
         confidence="low",
-        agent_trace=[{"agent": "orchestrator", "action": "stub", "result": "ok"}],
     )
 
 
-# ---------------------------------------------------------------------------
-# Graph  (Phase 2 will return real NetworkX data)
-# ---------------------------------------------------------------------------
+# ── Graph ──────────────────────────────────────────────────────────────────────
 @router.get("/graph", tags=["Pipeline"])
 async def get_graph():
     """Return knowledge graph as node/edge JSON for frontend visualization."""
-    from services.graph_store import get_graph_json
-
-    # TODO (Phase 2): populate graph during ingestion
     return JSONResponse(content=get_graph_json())

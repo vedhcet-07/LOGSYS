@@ -1,0 +1,26 @@
+{
+  "description": "System metrics during DB connection pool exhaustion incident — 2024-01-15 02:27 to 02:33 UTC",
+  "services": ["api-gateway", "auth-service", "user-db"],
+  "metrics": [
+    {"timestamp": "2024-01-15T02:27:00Z", "cpu_percent": 38.2, "memory_percent": 61.4, "db_latency_ms": 14.2, "api_latency_ms": 42.1, "error_rate": 0.005, "requests_per_sec": 245, "db_connections_active": 18},
+    {"timestamp": "2024-01-15T02:27:30Z", "cpu_percent": 40.1, "memory_percent": 61.8, "db_latency_ms": 15.1, "api_latency_ms": 44.3, "error_rate": 0.004, "requests_per_sec": 251, "db_connections_active": 21},
+    {"timestamp": "2024-01-15T02:28:00Z", "cpu_percent": 41.5, "memory_percent": 62.1, "db_latency_ms": 13.8, "api_latency_ms": 43.2, "error_rate": 0.005, "requests_per_sec": 248, "db_connections_active": 19},
+    {"timestamp": "2024-01-15T02:28:30Z", "cpu_percent": 43.2, "memory_percent": 62.4, "db_latency_ms": 16.5, "api_latency_ms": 45.6, "error_rate": 0.006, "requests_per_sec": 253, "db_connections_active": 24},
+    {"timestamp": "2024-01-15T02:29:00Z", "cpu_percent": 42.8, "memory_percent": 63.0, "db_latency_ms": 17.2, "api_latency_ms": 46.1, "error_rate": 0.005, "requests_per_sec": 250, "db_connections_active": 22},
+    {"timestamp": "2024-01-15T02:29:30Z", "cpu_percent": 45.1, "memory_percent": 63.5, "db_latency_ms": 18.9, "api_latency_ms": 48.3, "error_rate": 0.007, "requests_per_sec": 258, "db_connections_active": 28},
+    {"timestamp": "2024-01-15T02:30:00Z", "cpu_percent": 51.3, "memory_percent": 64.2, "db_latency_ms": 245.7, "api_latency_ms": 312.5, "error_rate": 0.012, "requests_per_sec": 261, "db_connections_active": 55},
+    {"timestamp": "2024-01-15T02:30:15Z", "cpu_percent": 58.9, "memory_percent": 65.1, "db_latency_ms": 380.2, "api_latency_ms": 445.8, "error_rate": 0.018, "requests_per_sec": 259, "db_connections_active": 72},
+    {"timestamp": "2024-01-15T02:30:30Z", "cpu_percent": 67.4, "memory_percent": 66.3, "db_latency_ms": 560.1, "api_latency_ms": 678.4, "error_rate": 0.031, "requests_per_sec": 255, "db_connections_active": 88},
+    {"timestamp": "2024-01-15T02:30:45Z", "cpu_percent": 78.2, "memory_percent": 67.8, "db_latency_ms": 890.5, "api_latency_ms": 1234.6, "error_rate": 0.058, "requests_per_sec": 248, "db_connections_active": 97},
+    {"timestamp": "2024-01-15T02:31:00Z", "cpu_percent": 94.7, "memory_percent": 72.4, "db_latency_ms": 30045.0, "api_latency_ms": 30312.8, "error_rate": 0.893, "requests_per_sec": 201, "db_connections_active": 100},
+    {"timestamp": "2024-01-15T02:31:15Z", "cpu_percent": 96.1, "memory_percent": 74.8, "db_latency_ms": 30001.0, "api_latency_ms": 30089.5, "error_rate": 0.961, "requests_per_sec": 178, "db_connections_active": 100},
+    {"timestamp": "2024-01-15T02:31:30Z", "cpu_percent": 95.3, "memory_percent": 75.2, "db_latency_ms": 30002.0, "api_latency_ms": 30145.2, "error_rate": 0.953, "requests_per_sec": 165, "db_connections_active": 100},
+    {"timestamp": "2024-01-15T02:31:45Z", "cpu_percent": 92.8, "memory_percent": 74.1, "db_latency_ms": 28450.0, "api_latency_ms": 29876.4, "error_rate": 0.928, "requests_per_sec": 152, "db_connections_active": 100},
+    {"timestamp": "2024-01-15T02:32:00Z", "cpu_percent": 88.5, "memory_percent": 73.6, "db_latency_ms": 15234.0, "api_latency_ms": 18945.2, "error_rate": 0.885, "requests_per_sec": 143, "db_connections_active": 100},
+    {"timestamp": "2024-01-15T02:32:15Z", "cpu_percent": 71.2, "memory_percent": 70.8, "db_latency_ms": 2345.5, "api_latency_ms": 3456.7, "error_rate": 0.312, "requests_per_sec": 178, "db_connections_active": 45},
+    {"timestamp": "2024-01-15T02:32:30Z", "cpu_percent": 55.4, "memory_percent": 67.9, "db_latency_ms": 345.2, "api_latency_ms": 567.8, "error_rate": 0.089, "requests_per_sec": 201, "db_connections_active": 28},
+    {"timestamp": "2024-01-15T02:32:45Z", "cpu_percent": 48.1, "memory_percent": 65.4, "db_latency_ms": 98.7, "api_latency_ms": 145.3, "error_rate": 0.024, "requests_per_sec": 225, "db_connections_active": 18},
+    {"timestamp": "2024-01-15T02:33:00Z", "cpu_percent": 42.3, "memory_percent": 63.8, "db_latency_ms": 18.5, "api_latency_ms": 56.4, "error_rate": 0.021, "requests_per_sec": 242, "db_connections_active": 15},
+    {"timestamp": "2024-01-15T02:33:30Z", "cpu_percent": 39.8, "memory_percent": 62.1, "db_latency_ms": 15.2, "api_latency_ms": 48.7, "error_rate": 0.009, "requests_per_sec": 249, "db_connections_active": 14}
+  ]
+}
