@@ -1,10 +1,7 @@
 """
 LogMind – RCA Agent
-Responsibilities:
-  1. Build a structured context from retrieved evidence + graph nodes
-  2. Call Gemini LLM with an SRE-focused RCA prompt
-  3. Parse structured JSON output
-  4. Fallback: template-based RCA from evidence when no API key is configured
+Uses google-genai SDK (new) with gemini-2.0-flash.
+Falls back to template RCA if API key is missing or call fails.
 """
 from __future__ import annotations
 
@@ -14,10 +11,11 @@ import re
 from typing import Any
 
 from agents.base_agent import BaseAgent
-from config import GEMINI_API_KEY
+from config import GEMINI_API_KEY, GROQ_API_KEY, LLM_MODEL
 from models import RCAOutput, EvidenceItem
 
 logger = logging.getLogger("logmind.agent.rca")
+
 
 # ── Prompt ────────────────────────────────────────────────────────────────────
 _RCA_PROMPT = """You are an expert SRE (Site Reliability Engineer) performing root cause analysis on a production incident.
@@ -89,101 +87,70 @@ def _format_graph(graph_nodes: list[dict]) -> str:
 def _extract_json(text: str) -> dict:
     """Robustly extract JSON from LLM response (handles markdown fences)."""
     text = text.strip()
-
-    # Direct JSON
     if text.startswith("{"):
         try:
             return json.loads(text)
         except json.JSONDecodeError:
             pass
-
-    # JSON inside ```json ... ```
     m = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
     if m:
         try:
             return json.loads(m.group(1))
         except json.JSONDecodeError:
             pass
-
-    # Greedy JSON object extraction
     m = re.search(r"\{.*\}", text, re.DOTALL)
     if m:
         try:
             return json.loads(m.group())
         except json.JSONDecodeError:
             pass
-
     return {}
 
 
 def _template_rca(query: str, evidence: list[dict], graph_nodes: list[dict]) -> dict:
-    """
-    Template-based RCA used when GEMINI_API_KEY is not set.
-    Produces a reasonable answer purely from the retrieved evidence.
-    """
-    services  = list({e.get("metadata", {}).get("service", "") for e in evidence if e.get("metadata", {}).get("service")})
-    anomalies = [e for e in evidence if e.get("metadata", {}).get("anomaly_count", 0)]
-
-    # Try to extract error lines from log snippets
+    """Template-based RCA when no API key is set or LLM call fails."""
+    services = list({
+        e.get("metadata", {}).get("service", "")
+        for e in evidence
+        if e.get("metadata", {}).get("service")
+    })
     error_lines: list[str] = []
     for e in evidence:
-        snippet = e.get("snippet", "")
-        for line in snippet.splitlines():
+        for line in e.get("snippet", "").splitlines():
             if any(kw in line.upper() for kw in ("ERROR", "CRITICAL", "TIMEOUT", "EXHAUSTED")):
                 error_lines.append(line.strip()[:120])
     error_lines = error_lines[:5]
 
-    graph_types = {}
-    for gn in graph_nodes:
-        t = gn.get("attrs", {}).get("type", "entity")
-        graph_types.setdefault(t, []).append(gn.get("node", "?"))
-
     root_cause = (
         f"Based on retrieved logs and metrics: {error_lines[0]}"
-        if error_lines else "Unable to determine root cause — please set GEMINI_API_KEY for LLM analysis."
+        if error_lines
+        else "Unable to determine root cause — set GEMINI_API_KEY for LLM analysis."
     )
-
-    recommendations = [
-        "Review database connection pool configuration and set appropriate limits.",
-        "Implement circuit breakers on all downstream service calls.",
-        "Add health check probes and auto-restart policies for critical services.",
-        "Set up alerting on connection pool utilization (>70% threshold).",
-    ]
-
     return {
         "root_cause":        root_cause,
-        "summary":           f"Analysis based on {len(evidence)} evidence items across logs and metrics. {len(error_lines)} error events detected. Affected services: {', '.join(services) if services else 'unknown'}.",
+        "summary":           f"Analysis based on {len(evidence)} evidence items. {len(error_lines)} error events detected. Services: {', '.join(services) or 'unknown'}.",
         "timeline":          [line[:100] for line in error_lines],
         "affected_services": services or ["unknown"],
-        "recommendations":   recommendations,
-        "confidence":        "medium" if evidence else "low",
-        "answer":            f"[Template mode — set GEMINI_API_KEY for full LLM analysis]\n\nQuery: {query}\n\nTop errors found:\n" + "\n".join(f"- {l}" for l in error_lines),
+        "recommendations": [
+            "Review database connection pool configuration and set appropriate limits.",
+            "Implement circuit breakers on all downstream service calls.",
+            "Add health check probes and auto-restart policies for critical services.",
+            "Set up alerting on connection pool utilization (>70% threshold).",
+        ],
+        "confidence": "medium" if evidence else "low",
+        "answer": f"[Template mode — set GEMINI_API_KEY for full LLM analysis]\n\nQuery: {query}\n\nTop errors:\n" + "\n".join(f"- {l}" for l in error_lines),
     }
 
 
-# ── Agent class ───────────────────────────────────────────────────────────────
+# ── Agent ─────────────────────────────────────────────────────────────────────
 
 class RCAAgent(BaseAgent):
-    """
-    Generates a structured Root Cause Analysis by calling Gemini with
-    the retrieved evidence and graph context. Falls back to a template
-    response when no API key is configured.
-    """
+    """Generates structured RCA via Gemini LLM with template fallback."""
 
     def __init__(self):
         super().__init__("rca_agent")
 
     def run(self, inputs: dict[str, Any]) -> dict[str, Any]:
-        """
-        Args:
-            inputs: {
-                "query": str,
-                "evidence": list[dict],
-                "graph_nodes": list[dict]
-            }
-        Returns:
-            {"rca": RCAOutput, "trace": list[dict]}
-        """
         query       = inputs.get("query", "")
         evidence    = inputs.get("evidence", [])
         graph_nodes = inputs.get("graph_nodes", [])
@@ -194,11 +161,19 @@ class RCAAgent(BaseAgent):
 
         self._trace("context_build", f"Built context: {len(evidence)} evidence items, {len(graph_nodes)} graph nodes")
 
-        # ── LLM call ──────────────────────────────────────────────────────
         rca_dict: dict = {}
 
-        if not GEMINI_API_KEY:
-            self._trace("llm_skip", "No GEMINI_API_KEY — using template RCA")
+        # ── Provider auto-detection ───────────────────────────────────────
+        # Groq models: llama-*, mixtral-*, gemma-* (anything without "gemini")
+        # Gemini models: gemini-*
+        _is_groq   = GROQ_API_KEY   and not LLM_MODEL.startswith("gemini")
+        _is_gemini = GEMINI_API_KEY and     LLM_MODEL.startswith("gemini")
+
+        if not _is_groq and not _is_gemini:
+            missing = []
+            if not GROQ_API_KEY:   missing.append("GROQ_API_KEY")
+            if not GEMINI_API_KEY: missing.append("GEMINI_API_KEY")
+            self._trace("llm_skip", f"No API key for model '{LLM_MODEL}'. Missing: {missing}")
             rca_dict = _template_rca(query, evidence, graph_nodes)
         else:
             prompt = _RCA_PROMPT.format(
@@ -207,12 +182,37 @@ class RCAAgent(BaseAgent):
                 graph_text=graph_text,
             )
             try:
-                import google.generativeai as genai
-                genai.configure(api_key=GEMINI_API_KEY)
-                model    = genai.GenerativeModel("gemini-1.5-flash")
-                response = model.generate_content(prompt)
-                raw_text = response.text
-                self._trace("llm_call", f"Gemini response received ({len(raw_text)} chars)")
+                if _is_groq:
+                    # ── Groq (OpenAI-compatible) ──────────────────────────
+                    import httpx
+                    resp = httpx.post(
+                        "https://api.groq.com/openai/v1/chat/completions",
+                        headers={
+                            "Authorization": f"Bearer {GROQ_API_KEY}",
+                            "Content-Type":  "application/json",
+                        },
+                        json={
+                            "model":       LLM_MODEL,
+                            "messages":    [{"role": "user", "content": prompt}],
+                            "temperature": 0.2,
+                            "max_tokens":  2048,
+                        },
+                        timeout=60,
+                    )
+                    resp.raise_for_status()
+                    raw_text = resp.json()["choices"][0]["message"]["content"]
+                    self._trace("llm_call", f"Groq {LLM_MODEL} responded ({len(raw_text)} chars)")
+
+                else:
+                    # ── Gemini ────────────────────────────────────────────
+                    from google import genai
+                    client   = genai.Client(api_key=GEMINI_API_KEY)
+                    response = client.models.generate_content(
+                        model=LLM_MODEL,
+                        contents=prompt,
+                    )
+                    raw_text = response.text
+                    self._trace("llm_call", f"Gemini {LLM_MODEL} responded ({len(raw_text)} chars)")
 
                 rca_dict = _extract_json(raw_text)
                 if not rca_dict:
@@ -226,7 +226,6 @@ class RCAAgent(BaseAgent):
                 self._trace("llm_error", f"Error: {exc} — falling back to template")
                 rca_dict = _template_rca(query, evidence, graph_nodes)
 
-        # ── Build EvidenceItem list ───────────────────────────────────────
         evidence_items = [
             EvidenceItem(
                 type=e.get("metadata", {}).get("modality", "unknown"),
@@ -248,6 +247,5 @@ class RCAAgent(BaseAgent):
             evidence          = evidence_items,
         )
 
-        self._trace("rca_complete", f"RCA generated. Confidence={rca_output.confidence}, Services={rca_output.affected_services[:3]}")
-
+        self._trace("rca_complete", f"RCA done. Confidence={rca_output.confidence}, Services={rca_output.affected_services[:3]}")
         return {"rca": rca_output, "trace": self.get_trace()}

@@ -12,6 +12,8 @@ from typing import Optional
 
 from config import GEMINI_API_KEY, EMBEDDING_MODEL, EMBEDDING_DIM
 
+LLM_MODEL = "gemini-2.0-flash"
+
 logger = logging.getLogger("logmind.embedder")
 
 # Max chars to send in a single embed call (Gemini limit ~36k tokens)
@@ -29,27 +31,30 @@ def _configure_genai() -> bool:
         logger.warning("GEMINI_API_KEY not set — embedder will use fallback zeros.")
         return False
     try:
-        import google.generativeai as genai
-        genai.configure(api_key=GEMINI_API_KEY)
+        from google import genai  # noqa: F401 – just verify import works
         _genai_configured = True
         return True
     except ImportError:
-        logger.warning("google-generativeai not installed. Install it or set GEMINI_API_KEY.")
+        logger.warning("google-genai not installed. Run: pip install google-genai")
         return False
 
 
-def _embed_gemini(text: str) -> list[float]:
-    """Call Gemini text-embedding-004 and return embedding vector."""
-    import google.generativeai as genai
-    # Truncate to safe length
+def _embed_gemini(text: str, task_type: str = "retrieval_document") -> list[float]:
+    """Call Gemini embedding model and return a 768-dim vector."""
+    from google import genai
+    from google.genai import types as gtypes
     if len(text) > _MAX_TEXT_CHARS:
         text = text[:_MAX_TEXT_CHARS]
-    result = genai.embed_content(
+    client = genai.Client(api_key=GEMINI_API_KEY)
+    result = client.models.embed_content(
         model=EMBEDDING_MODEL,
-        content=text,
-        task_type="retrieval_document",
+        contents=text,
+        config=gtypes.EmbedContentConfig(
+            task_type=task_type,
+            output_dimensionality=EMBEDDING_DIM,  # 768 — Matryoshka truncation
+        ),
     )
-    return result["embedding"]
+    return result.embeddings[0].values
 
 
 def _embed_fallback(text: str) -> list[float]:
@@ -77,15 +82,7 @@ def embed(text: str, task_type: str = "retrieval_document") -> list[float]:
     if _configure_genai():
         for attempt in range(3):
             try:
-                import google.generativeai as genai
-                if len(text) > _MAX_TEXT_CHARS:
-                    text = text[:_MAX_TEXT_CHARS]
-                result = genai.embed_content(
-                    model=EMBEDDING_MODEL,
-                    content=text,
-                    task_type=task_type,
-                )
-                return result["embedding"]
+                return _embed_gemini(text, task_type)
             except Exception as exc:
                 wait = 2 ** attempt
                 logger.warning("Embed attempt %d failed: %s — retrying in %ds", attempt + 1, exc, wait)

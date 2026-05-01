@@ -9,7 +9,7 @@ import logging
 from pathlib import Path
 
 from models import BaseChunk
-from config import GEMINI_API_KEY
+from config import GEMINI_API_KEY, LLM_MODEL
 
 logger = logging.getLogger("logmind.image_analyzer")
 
@@ -31,16 +31,29 @@ def _get_cache_path(image_path: Path) -> Path:
 def _call_gemini_vision(image_path: Path) -> str:
     """Call Gemini Vision API and return the text summary."""
     try:
-        import google.generativeai as genai
+        from google import genai
+        from google.genai import types as gtypes
         from PIL import Image as PILImage
 
-        genai.configure(api_key=GEMINI_API_KEY)
-        model = genai.GenerativeModel("gemini-1.5-flash")
-        img = PILImage.open(image_path)
-        response = model.generate_content([_VISION_PROMPT, img])
+        client = genai.Client(api_key=GEMINI_API_KEY)
+        img    = PILImage.open(image_path)
+
+        # Convert PIL image to bytes for the new SDK
+        import io
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        img_bytes = buf.getvalue()
+
+        response = client.models.generate_content(
+            model=LLM_MODEL,
+            contents=[
+                _VISION_PROMPT,
+                gtypes.Part.from_bytes(data=img_bytes, mime_type="image/png"),
+            ],
+        )
         return response.text.strip()
     except ImportError:
-        logger.warning("google-generativeai or pillow not installed. Returning placeholder.")
+        logger.warning("google-genai or pillow not installed. Returning placeholder.")
         return f"[Vision unavailable] Dashboard screenshot: {image_path.name}"
     except Exception as exc:
         logger.error("Gemini Vision call failed for %s: %s", image_path.name, exc)

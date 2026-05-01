@@ -18,9 +18,12 @@ GROQ_API_KEY: str = os.getenv("GROQ_API_KEY", "")
 PINECONE_API_KEY: str = os.getenv("PINECONE_API_KEY", "")
 PINECONE_INDEX_NAME: str = os.getenv("PINECONE_INDEX_NAME", "logmind-index")
 
+# ── LLM model ─────────────────────────────────────────────────────────────────
+LLM_MODEL: str = os.getenv("LLM_MODEL", "gemini-2.0-flash")
+
 # ── Embeddings ────────────────────────────────────────────────────────────────
 EMBEDDING_DIM: int = int(os.getenv("EMBEDDING_DIM", "768"))
-EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL", "models/text-embedding-004")
+EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL", "gemini-embedding-001")
 
 # ── Ollama ────────────────────────────────────────────────────────────────────
 OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "")
