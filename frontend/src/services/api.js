@@ -3,7 +3,12 @@
  */
 import axios from 'axios'
 
-const BASE_URL = '/api'
+// In Docker (nginx): calls go to /api and nginx proxies to backend
+// On Render Static Site: VITE_BACKEND_URL is set at build time to the backend URL
+const BASE_URL = import.meta.env.VITE_BACKEND_URL
+  ? `${import.meta.env.VITE_BACKEND_URL}/api`
+  : '/api'
+
 const client = axios.create({ baseURL: BASE_URL, timeout: 120_000 })
 
 // ── Health ────────────────────────────────────────────────────────────────────
