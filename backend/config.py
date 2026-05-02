@@ -6,9 +6,14 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-# Load .env from the project root (one level above backend/)
-_root = Path(__file__).parent.parent
-load_dotenv(_root / ".env", override=False)
+# Load .env — try project root first, then backend dir, then skip silently
+# On Railway/cloud, env vars are injected directly — no .env file needed
+_root    = Path(__file__).parent.parent
+_backend = Path(__file__).parent
+for _env_path in [_root / ".env", _backend / ".env"]:
+    if _env_path.exists():
+        load_dotenv(_env_path, override=False)
+        break
 
 # ── LLM / Vision ─────────────────────────────────────────────────────────────
 GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")

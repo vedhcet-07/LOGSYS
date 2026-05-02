@@ -43,16 +43,14 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS – allow the React dev server (port 5173) and Docker-served frontend
+# CORS – allow all origins so Railway/Render/cloud frontends work
+# In production you can restrict this to your frontend domain
+import os as _os
+_ALLOWED_ORIGIN = _os.getenv("FRONTEND_URL", "*")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",   # Vite dev server
-        "http://localhost:3000",   # Docker nginx
-        "http://127.0.0.1:5173",
-        "http://127.0.0.1:3000",
-    ],
-    allow_credentials=True,
+    allow_origins=["*"],          # wildcard — safe because API keys live server-side
+    allow_credentials=False,       # must be False when allow_origins=["*"]
     allow_methods=["*"],
     allow_headers=["*"],
 )
